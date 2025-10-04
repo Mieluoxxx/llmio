@@ -25,7 +25,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Form,
   FormControl,
@@ -60,8 +59,10 @@ import type { Provider, ProviderTemplate, ProviderModel } from "@/lib/api";
 const formSchema = z.object({
   name: z.string().min(1, { message: "提供商名称不能为空" }),
   type: z.string().min(1, { message: "提供商类型不能为空" }),
-  config: z.string().min(1, { message: "配置不能为空" }),
+  base_url: z.string().min(1, { message: "Base URL 不能为空" }),
+  api_key: z.string().min(1, { message: "API Key 不能为空" }),
   console: z.string().optional(),
+  raw_config: z.string().optional(),
 });
 
 export default function ProvidersPage() {
@@ -84,10 +85,46 @@ export default function ProvidersPage() {
     defaultValues: {
       name: "",
       type: "",
-      config: "",
+      base_url: "",
+      api_key: "",
       console: "",
+      raw_config: "",
     },
   });
+
+  const parseConfig = (config: string | null | undefined) => {
+    if (!config) {
+      return { base_url: "", api_key: "", raw: "" };
+    }
+    try {
+      const parsed = JSON.parse(config);
+      return {
+        base_url: typeof parsed.base_url === "string" ? parsed.base_url : "",
+        api_key: typeof parsed.api_key === "string" ? parsed.api_key : "",
+        raw: config,
+      };
+    } catch (error) {
+      console.warn("未能解析配置为 JSON", error);
+      return { base_url: "", api_key: "", raw: config };
+    }
+  };
+
+  const buildConfigString = (values: z.infer<typeof formSchema>) => {
+    let configObj: Record<string, unknown> = {};
+    if (values.raw_config) {
+      try {
+        const parsed = JSON.parse(values.raw_config);
+        if (parsed && typeof parsed === "object") {
+          configObj = { ...parsed };
+        }
+      } catch (error) {
+        console.warn("原始配置解析失败，使用默认结构", error);
+      }
+    }
+    configObj.base_url = values.base_url;
+    configObj.api_key = values.api_key;
+    return JSON.stringify(configObj);
+  };
 
   useEffect(() => {
     fetchProviders();
@@ -144,11 +181,11 @@ export default function ProvidersPage() {
       await createProvider({
         name: values.name,
         type: values.type,
-        config: values.config,
+        config: buildConfigString(values),
         console: values.console || ""
       });
       setOpen(false);
-      form.reset({ name: "", type: "", config: "", console: "" });
+      form.reset({ name: "", type: "", base_url: "", api_key: "", console: "", raw_config: "" });
       fetchProviders();
     } catch (err) {
       setError("创建提供商失败");
@@ -162,12 +199,12 @@ export default function ProvidersPage() {
       await updateProvider(editingProvider.ID, {
         name: values.name,
         type: values.type,
-        config: values.config,
+        config: buildConfigString(values),
         console: values.console || ""
       });
       setOpen(false);
       setEditingProvider(null);
-      form.reset({ name: "", type: "", config: "", console: "" });
+      form.reset({ name: "", type: "", base_url: "", api_key: "", console: "", raw_config: "" });
       fetchProviders();
     } catch (err) {
       setError("更新提供商失败");
@@ -189,18 +226,21 @@ export default function ProvidersPage() {
 
   const openEditDialog = (provider: Provider) => {
     setEditingProvider(provider);
+    const parsed = parseConfig(provider.Config);
     form.reset({
       name: provider.Name,
       type: provider.Type,
-      config: provider.Config,
+      base_url: parsed.base_url,
+      api_key: parsed.api_key,
       console: provider.Console || "",
+      raw_config: parsed.raw,
     });
     setOpen(true);
   };
 
   const openCreateDialog = () => {
     setEditingProvider(null);
-    form.reset({ name: "", type: "", config: "", console: "" });
+    form.reset({ name: "", type: "", base_url: "", api_key: "", console: "", raw_config: "" });
     setOpen(true);
   };
 
@@ -223,26 +263,20 @@ export default function ProvidersPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>ID</TableHead>
-              <TableHead>名称</TableHead>
-              <TableHead>类型</TableHead>
-              <TableHead>配置</TableHead>
-              <TableHead>控制台</TableHead>
-              <TableHead>操作</TableHead>
+              <TableHead className="px-4 py-3">ID</TableHead>
+              <TableHead className="px-4 py-3">名称</TableHead>
+              <TableHead className="px-4 py-3">类型</TableHead>
+              <TableHead className="px-4 py-3">控制台</TableHead>
+              <TableHead className="px-4 py-3">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {providers.map((provider) => (
               <TableRow key={provider.ID}>
-                <TableCell>{provider.ID}</TableCell>
-                <TableCell>{provider.Name}</TableCell>
-                <TableCell>{provider.Type}</TableCell>
-                <TableCell>
-                  <pre className="text-xs overflow-hidden max-w-md truncate">
-                    {provider.Config}
-                  </pre>
-                </TableCell>
-                <TableCell>
+                <TableCell className="px-4 py-3">{provider.ID}</TableCell>
+                <TableCell className="px-4 py-3">{provider.Name}</TableCell>
+                <TableCell className="px-4 py-3">{provider.Type}</TableCell>
+                <TableCell className="px-4 py-3">
                   {provider.Console ? (
                     <Button 
                       title={provider.Console}
@@ -256,7 +290,7 @@ export default function ProvidersPage() {
                     "暂未设置"
                   )}
                 </TableCell>
-                <TableCell className="space-x-2">
+                <TableCell className="px-4 py-3 space-x-2">
                   <Button
                     variant="outline" 
                     size="sm" 
@@ -408,10 +442,16 @@ export default function ProvidersPage() {
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                         onChange={(e) => {
                           field.onChange(e);
-                          // When type changes, populate config with template if available
                           const selectedTemplate = providerTemplates.find(t => t.type === e.target.value);
                           if (selectedTemplate) {
-                            form.setValue("config", selectedTemplate.template);
+                            form.setValue("raw_config", selectedTemplate.template ?? "");
+                            const parsed = parseConfig(selectedTemplate.template);
+                            form.setValue("base_url", parsed.base_url);
+                            form.setValue("api_key", parsed.api_key);
+                          } else {
+                            form.setValue("raw_config", "");
+                            form.setValue("base_url", "");
+                            form.setValue("api_key", "");
                           }
                         }}
                       >
@@ -430,15 +470,26 @@ export default function ProvidersPage() {
               
               <FormField
                 control={form.control}
-                name="config"
+                name="base_url"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>配置</FormLabel>
+                    <FormLabel>Base URL</FormLabel>
                     <FormControl>
-                      <Textarea 
-                        {...field} 
-                        className="resize-none whitespace-pre overflow-x-auto" 
-                      />
+                      <Input {...field} placeholder="https://api.example.com" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="api_key"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>API Key</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="输入 API Key" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

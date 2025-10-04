@@ -52,11 +52,13 @@ import {
   deleteModelProvider,
   getModels,
   getProviders,
-  testModelProvider
+  testModelProvider,
+  getProviderModels
 } from "@/lib/api";
-import type { ModelWithProvider, Model, Provider } from "@/lib/api";
+import type { ModelWithProvider, Model, Provider, ProviderModel } from "@/lib/api";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { Textarea } from "@/components/ui/textarea";
+import { FaTools, FaSitemap, FaImage } from "react-icons/fa";
 
 // 定义表单验证模式
 const formSchema = z.object({
@@ -97,6 +99,9 @@ export default function ModelProvidersPage() {
     success: null,
     error: null
   });
+  const [availableProviderModels, setAvailableProviderModels] = useState<ProviderModel[]>([]);
+  const [providerModelsLoading, setProviderModelsLoading] = useState(false);
+  const [providerModelsError, setProviderModelsError] = useState<string | null>(null);
 
   const dialogClose = () => {
     setTestDialogOpen(false)
@@ -188,7 +193,7 @@ export default function ModelProvidersPage() {
       // 异步加载状态数据
       loadProviderStatus(data, modelId);
     } catch (err) {
-      setError("获取模型提供商关联列表失败");
+      setError("获取模型映射列表失败");
       console.error(err);
     } finally {
       setLoading(false);
@@ -230,7 +235,7 @@ export default function ModelProvidersPage() {
         fetchModelProviders(selectedModelId);
       }
     } catch (err) {
-      setError("创建模型提供商关联失败");
+      setError("创建模型映射失败");
       console.error(err);
     }
   };
@@ -247,7 +252,7 @@ export default function ModelProvidersPage() {
         fetchModelProviders(selectedModelId);
       }
     } catch (err) {
-      setError("更新模型提供商关联失败");
+      setError("更新模型映射失败");
       console.error(err);
     }
   };
@@ -261,7 +266,7 @@ export default function ModelProvidersPage() {
         fetchModelProviders(selectedModelId);
       }
     } catch (err) {
-      setError("删除模型提供商关联失败");
+      setError("删除模型映射失败");
       console.error(err);
     }
   };
@@ -413,6 +418,8 @@ export default function ModelProvidersPage() {
       image: association.Image,
       weight: association.Weight,
     });
+    setAvailableProviderModels([]);
+    setProviderModelsError(null);
     setOpen(true);
   };
 
@@ -427,6 +434,8 @@ export default function ModelProvidersPage() {
       image: false,
       weight: 1
     });
+    setAvailableProviderModels([]);
+    setProviderModelsError(null);
     setOpen(true);
   };
 
@@ -441,12 +450,57 @@ export default function ModelProvidersPage() {
     nextParams.set("modelId", id.toString());
     setSearchParams(nextParams);
     form.setValue("model_id", id);
+    setAvailableProviderModels([]);
+    setProviderModelsError(null);
+  };
+
+  const providerIdValue = form.watch("provider_id");
+
+  useEffect(() => {
+    setAvailableProviderModels([]);
+    setProviderModelsError(null);
+    const currentAssociationProviderId = editingAssociation?.ProviderID ?? null;
+    const shouldResetProviderModel =
+      (!editingAssociation && providerIdValue !== 0) ||
+      (editingAssociation && providerIdValue !== currentAssociationProviderId);
+
+    if (shouldResetProviderModel) {
+      form.setValue("provider_name", "");
+    }
+  }, [providerIdValue, editingAssociation, form]);
+
+  const loadAvailableProviderModels = async () => {
+    const providerId = form.getValues("provider_id");
+    if (!providerId || providerId === 0) {
+      setProviderModelsError("请先选择提供商");
+      return;
+    }
+    setProviderModelsError(null);
+    setProviderModelsLoading(true);
+    try {
+      const data = await getProviderModels(providerId);
+      const existingModels = new Set(modelProviders.map(item => item.ProviderModel));
+      if (editingAssociation) {
+        existingModels.delete(editingAssociation.ProviderModel);
+      }
+      const filtered = data.filter((model) => model.id && !existingModels.has(model.id));
+      setAvailableProviderModels(filtered);
+      if (filtered.length === 0) {
+        setProviderModelsError("没有可用的提供商模型");
+      }
+    } catch (error) {
+      console.error("获取提供商模型失败", error);
+      setProviderModelsError("获取提供商模型失败");
+      setAvailableProviderModels([]);
+    } finally {
+      setProviderModelsLoading(false);
+    }
   };
 
   // 获取唯一的提供商类型列表
   const providerTypes = Array.from(new Set(providers.map(p => p.Type).filter(Boolean)));
 
-  // 根据选择的提供商类型过滤模型提供商关联
+  // 根据选择的提供商类型过滤模型映射
   const filteredModelProviders = selectedProviderType && selectedProviderType !== "all"
     ? modelProviders.filter(association => {
         const provider = providers.find(p => p.ID === association.ProviderID);
@@ -463,7 +517,7 @@ export default function ModelProvidersPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-        <h2 className="text-2xl font-bold">模型提供商关联</h2>
+        <h2 className="text-2xl font-bold">模型映射</h2>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
           <Select value={selectedProviderType} onValueChange={setSelectedProviderType}>
             <SelectTrigger className="w-full sm:w-48">
@@ -497,7 +551,7 @@ export default function ModelProvidersPage() {
       </div>
 
       {!selectedModelId ? (
-        <div>请选择一个模型来查看其提供商关联</div>
+        <div>请选择一个模型来查看其映射关系</div>
       ) : (
         <>
           {/* 桌面端表格 */}
@@ -505,16 +559,16 @@ export default function ModelProvidersPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>提供商模型</TableHead>
-                  <TableHead>类型</TableHead>
-                  <TableHead>提供商</TableHead>
-                  <TableHead>工具调用</TableHead>
-                  <TableHead>结构化输出</TableHead>
-                  <TableHead>视觉</TableHead>
-                  <TableHead>权重</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
+                  <TableHead className="px-4 py-3">ID</TableHead>
+                  <TableHead className="px-4 py-3">提供商模型</TableHead>
+                  <TableHead className="px-4 py-3">类型</TableHead>
+                  <TableHead className="px-4 py-3">提供商</TableHead>
+                  <TableHead className="px-4 py-3">工具调用</TableHead>
+                  <TableHead className="px-4 py-3">结构化输出</TableHead>
+                  <TableHead className="px-4 py-3">视觉</TableHead>
+                  <TableHead className="px-4 py-3">权重</TableHead>
+                  <TableHead className="px-4 py-3">状态</TableHead>
+                  <TableHead className="px-4 py-3">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -522,27 +576,27 @@ export default function ModelProvidersPage() {
                   const provider = providers.find(p => p.ID === association.ProviderID);
                   return (
                     <TableRow key={association.ID}>
-                      <TableCell>{association.ID}</TableCell>
-                      <TableCell>{association.ProviderModel}</TableCell>
-                      <TableCell>{provider?.Type}</TableCell>
-                      <TableCell>{provider ? provider.Name : '未知'}</TableCell>
-                      <TableCell>
+                      <TableCell className="px-4 py-3">{association.ID}</TableCell>
+                      <TableCell className="px-4 py-3">{association.ProviderModel}</TableCell>
+                      <TableCell className="px-4 py-3">{provider?.Type}</TableCell>
+                      <TableCell className="px-4 py-3">{provider ? provider.Name : '未知'}</TableCell>
+                      <TableCell className="px-4 py-3">
                         <span className={association.ToolCall ? "text-green-500" : "text-red-500"}>
                           {association.ToolCall ? '✓' : '✗'}
                         </span>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="px-4 py-3">
                         <span className={association.StructuredOutput ? "text-green-500" : "text-red-500"}>
                           {association.StructuredOutput ? '✓' : '✗'}
                         </span>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="px-4 py-3">
                         <span className={association.Image ? "text-green-500" : "text-red-500"}>
                           {association.Image ? '✓' : '✗'}
                         </span>
                       </TableCell>
-                      <TableCell>{association.Weight}</TableCell>
-                      <TableCell>
+                      <TableCell className="px-4 py-3">{association.Weight}</TableCell>
+                      <TableCell className="px-4 py-3">
                         <div className="flex items-center space-x-4">
                           {providerStatus[association.ID] ? (
                             providerStatus[association.ID].length > 0 ? (
@@ -564,7 +618,15 @@ export default function ModelProvidersPage() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="space-x-2 text-right">
+                      <TableCell className="px-4 py-3 space-x-2">
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="bg-blue-600 hover:bg-blue-500 text-white dark:bg-blue-500 dark:hover:bg-blue-400"
+                          onClick={() => handleTest(association.ID)}
+                        >
+                          测试
+                        </Button>
                         <Button
                           variant="outline"
                           size="sm"
@@ -584,7 +646,7 @@ export default function ModelProvidersPage() {
                             <AlertDialogHeader>
                               <AlertDialogTitle>确定要删除这个关联吗？</AlertDialogTitle>
                               <AlertDialogDescription>
-                                此操作无法撤销。这将永久删除该模型提供商关联。
+                                此操作无法撤销。这将永久删除该模型映射。
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
@@ -593,13 +655,6 @@ export default function ModelProvidersPage() {
                             </AlertDialogFooter>
                           </AlertDialogContent>
                         </AlertDialog>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleTest(association.ID)}
-                        >
-                          测试
-                        </Button>
                       </TableCell>
                     </TableRow>
                   );
@@ -681,7 +736,7 @@ export default function ModelProvidersPage() {
                           <AlertDialogHeader>
                             <AlertDialogTitle>确定要删除这个关联吗？</AlertDialogTitle>
                             <AlertDialogDescription>
-                              此操作无法撤销。这将永久删除该模型提供商关联。
+                              此操作无法撤销。这将永久删除该模型映射。
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
@@ -712,12 +767,12 @@ export default function ModelProvidersPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {editingAssociation ? "编辑关联" : "添加关联"}
+              {editingAssociation ? "编辑映射" : "添加映射"}
             </DialogTitle>
             <DialogDescription>
               {editingAssociation
-                ? "修改模型提供商关联"
-                : "添加一个新的模型提供商关联"}
+                ? "修改模型映射"
+                : "添加一个新的模型映射"}
             </DialogDescription>
           </DialogHeader>
 
@@ -727,7 +782,7 @@ export default function ModelProvidersPage() {
                 control={form.control}
                 name="model_id"
                 render={({ field }) => (
-                  <FormItem>
+                  <FormItem className={editingAssociation ? "hidden" : ""}>
                     <FormLabel>模型</FormLabel>
                     <Select
                       value={field.value.toString()}
@@ -786,76 +841,119 @@ export default function ModelProvidersPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>提供商模型</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        placeholder="输入提供商模型名称"
-                      />
-                    </FormControl>
+                    <div className="space-y-2">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <FormControl>
+                          <Select
+                            value={field.value || undefined}
+                            onValueChange={(value) => {
+                              field.onChange(value);
+                              setProviderModelsError(null);
+                            }}
+                            disabled={availableProviderModels.length === 0}
+                          >
+                            <SelectTrigger className="form-select">
+                              <SelectValue placeholder={field.value ? `已选择: ${field.value}` : "选择提供商模型"} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {field.value && !availableProviderModels.some((model) => model.id === field.value) && (
+                                <SelectItem value={field.value}>
+                                  {field.value}
+                                </SelectItem>
+                              )}
+                              {availableProviderModels.map((model) => (
+                                <SelectItem key={model.id} value={model.id}>
+                                  {model.id}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={loadAvailableProviderModels}
+                          disabled={providerModelsLoading || !providerIdValue}
+                        >
+                          {providerModelsLoading ? "加载中..." : "获取模型列表"}
+                        </Button>
+                      </div>
+                      {providerModelsError && (
+                        <div className="text-sm text-red-500">{providerModelsError}</div>
+                      )}
+                      {availableProviderModels.length === 0 && !providerModelsError && (
+                        <p className="text-sm text-gray-500">点击获取模型列表，从提供商加载可用模型</p>
+                      )}
+                    </div>
                     <FormMessage />
                   </FormItem>
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="tool_call"
-                render={({ field }) => (
-                  <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
-                    <FormControl>
-                      <Checkbox
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </FormControl>
-                    <div className="space-y-1 leading-none">
-                      <FormLabel>
-                        工具调用
-                      </FormLabel>
-                    </div>
-                  </FormItem>
-                )}
-              />
+              <div className="space-y-2">
+                <span className="text-sm font-medium text-gray-700">能力支持</span>
+                <div className="flex flex-wrap gap-3">
+                  <FormField
+                    control={form.control}
+                    name="tool_call"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-3 rounded-md border px-4 py-2">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            className="mt-0"
+                          />
+                        </FormControl>
+                        <div className="flex items-center gap-2 text-sm">
+                          <FaTools className="text-blue-500 dark:text-blue-400" />
+                          <span>工具调用</span>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
 
-              <FormField
-                control={form.control}
-                name="structured_output"
-                render={({ field }) => (
-                  <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
-                    <FormControl>
-                      <Checkbox
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </FormControl>
-                    <div className="space-y-1 leading-none">
-                      <FormLabel>
-                        结构化输出
-                      </FormLabel>
-                    </div>
-                  </FormItem>
-                )}
-              />
+                  <FormField
+                    control={form.control}
+                    name="structured_output"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-3 rounded-md border px-4 py-2">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            className="mt-0"
+                          />
+                        </FormControl>
+                        <div className="flex items-center gap-2 text-sm">
+                          <FaSitemap className="text-emerald-500 dark:text-emerald-400" />
+                          <span>结构化输出</span>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
 
-              <FormField
-                control={form.control}
-                name="image"
-                render={({ field }) => (
-                  <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
-                    <FormControl>
-                      <Checkbox
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </FormControl>
-                    <div className="space-y-1 leading-none">
-                      <FormLabel>
-                        视觉
-                      </FormLabel>
-                    </div>
-                  </FormItem>
-                )}
-              />
+                  <FormField
+                    control={form.control}
+                    name="image"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-3 rounded-md border px-4 py-2">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            className="mt-0"
+                          />
+                        </FormControl>
+                        <div className="flex items-center gap-2 text-sm">
+                          <FaImage className="text-purple-500 dark:text-purple-400" />
+                          <span>视觉</span>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </div>
 
               <FormField
                 control={form.control}

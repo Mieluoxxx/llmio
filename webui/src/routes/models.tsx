@@ -170,23 +170,23 @@ export default function ModelsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>ID</TableHead>
-              <TableHead>名称</TableHead>
-              <TableHead>备注</TableHead>
-              <TableHead>重试次数限制</TableHead>
-              <TableHead>超时时间(秒)</TableHead>
-              <TableHead>操作</TableHead>
+              <TableHead className="px-4 py-3">ID</TableHead>
+              <TableHead className="px-4 py-3">名称</TableHead>
+              <TableHead className="px-4 py-3">备注</TableHead>
+              <TableHead className="px-4 py-3">重试次数限制</TableHead>
+              <TableHead className="px-4 py-3">超时时间(秒)</TableHead>
+              <TableHead className="px-4 py-3">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {models.map((model) => (
               <TableRow key={model.ID}>
-                <TableCell>{model.ID}</TableCell>
-                <TableCell>{model.Name}</TableCell>
-                <TableCell>{model.Remark}</TableCell>
-                <TableCell>{model.MaxRetry}</TableCell>
-                <TableCell>{model.TimeOut}</TableCell>
-                <TableCell className="space-x-2">
+                <TableCell className="px-4 py-3">{model.ID}</TableCell>
+                <TableCell className="px-4 py-3">{model.Name}</TableCell>
+                <TableCell className="px-4 py-3">{model.Remark}</TableCell>
+                <TableCell className="px-4 py-3">{model.MaxRetry}</TableCell>
+                <TableCell className="px-4 py-3">{model.TimeOut}</TableCell>
+                <TableCell className="px-4 py-3 space-x-2">
                   <Button
                     variant="default"
                     size="sm"
