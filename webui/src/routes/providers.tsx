@@ -92,6 +92,22 @@ export default function ProvidersPage() {
     },
   });
 
+  const normalizeBaseUrlInput = (url: string) => {
+    let trimmed = url.trim();
+    if (!trimmed) return "";
+    trimmed = trimmed.replace(/\/+$/g, "");
+    if (trimmed.toLowerCase().endsWith("/v1")) {
+      trimmed = trimmed.slice(0, -3);
+    }
+    return trimmed;
+  };
+
+  const appendApiVersion = (url: string) => {
+    const normalized = normalizeBaseUrlInput(url);
+    if (!normalized) return "";
+    return `${normalized}/v1`;
+  };
+
   const parseConfig = (config: string | null | undefined) => {
     if (!config) {
       return { base_url: "", api_key: "", raw: "" };
@@ -99,7 +115,7 @@ export default function ProvidersPage() {
     try {
       const parsed = JSON.parse(config);
       return {
-        base_url: typeof parsed.base_url === "string" ? parsed.base_url : "",
+        base_url: typeof parsed.base_url === "string" ? normalizeBaseUrlInput(parsed.base_url) : "",
         api_key: typeof parsed.api_key === "string" ? parsed.api_key : "",
         raw: config,
       };
@@ -121,9 +137,35 @@ export default function ProvidersPage() {
         console.warn("原始配置解析失败，使用默认结构", error);
       }
     }
-    configObj.base_url = values.base_url;
+    configObj.base_url = appendApiVersion(values.base_url);
     configObj.api_key = values.api_key;
     return JSON.stringify(configObj);
+  };
+
+  const getTemplateLabel = (type: string) => {
+    const normalized = type.toLowerCase();
+    if (normalized.includes("anthropic")) return "Anthropic";
+    if (normalized.includes("openai")) return "OpenAI Compatible";
+    return type;
+  };
+
+  const getDefaultTemplate = (templates: ProviderTemplate[]): ProviderTemplate | null => {
+    if (templates.length === 0) return null;
+    const preferred = templates.find((template) => template.type.toLowerCase().includes("openai"));
+    return preferred ?? templates[0];
+  };
+
+  const resetFormWithDefaults = () => {
+    const defaultTemplate = getDefaultTemplate(providerTemplates);
+    const parsed = defaultTemplate ? parseConfig(defaultTemplate.template) : { base_url: "", api_key: "", raw: "" };
+    form.reset({
+      name: "",
+      type: defaultTemplate?.type ?? "",
+      base_url: parsed.base_url,
+      api_key: parsed.api_key,
+      console: "",
+      raw_config: defaultTemplate?.template ?? "",
+    });
   };
 
   useEffect(() => {
@@ -148,6 +190,19 @@ export default function ProvidersPage() {
     try {
       const data = await getProviderTemplates();
       setProviderTemplates(data);
+      if (!editingProvider) {
+        const currentType = form.getValues("type");
+        if (!currentType) {
+          const defaultTemplate = getDefaultTemplate(data);
+          const parsed = defaultTemplate ? parseConfig(defaultTemplate.template) : { base_url: "", api_key: "", raw: "" };
+          if (defaultTemplate) {
+            form.setValue("type", defaultTemplate.type);
+            form.setValue("raw_config", defaultTemplate.template ?? "");
+            form.setValue("base_url", parsed.base_url);
+            form.setValue("api_key", parsed.api_key);
+          }
+        }
+      }
     } catch (err) {
       console.error("获取提供商模板失败", err);
     }
@@ -185,7 +240,7 @@ export default function ProvidersPage() {
         console: values.console || ""
       });
       setOpen(false);
-      form.reset({ name: "", type: "", base_url: "", api_key: "", console: "", raw_config: "" });
+      resetFormWithDefaults();
       fetchProviders();
     } catch (err) {
       setError("创建提供商失败");
@@ -204,7 +259,7 @@ export default function ProvidersPage() {
       });
       setOpen(false);
       setEditingProvider(null);
-      form.reset({ name: "", type: "", base_url: "", api_key: "", console: "", raw_config: "" });
+      resetFormWithDefaults();
       fetchProviders();
     } catch (err) {
       setError("更新提供商失败");
@@ -240,7 +295,7 @@ export default function ProvidersPage() {
 
   const openCreateDialog = () => {
     setEditingProvider(null);
-    form.reset({ name: "", type: "", base_url: "", api_key: "", console: "", raw_config: "" });
+    resetFormWithDefaults();
     setOpen(true);
   };
 
@@ -275,7 +330,7 @@ export default function ProvidersPage() {
               <TableRow key={provider.ID}>
                 <TableCell className="px-4 py-3">{provider.ID}</TableCell>
                 <TableCell className="px-4 py-3">{provider.Name}</TableCell>
-                <TableCell className="px-4 py-3">{provider.Type}</TableCell>
+                <TableCell className="px-4 py-3">{getTemplateLabel(provider.Type)}</TableCell>
                 <TableCell className="px-4 py-3">
                   {provider.Console ? (
                     <Button 
@@ -343,7 +398,7 @@ export default function ProvidersPage() {
               <div>
                 <h3 className="font-bold text-lg">{provider.Name}</h3>
                 <p className="text-sm text-gray-500">ID: {provider.ID}</p>
-                <p className="text-sm text-gray-500">类型: {provider.Type}</p>
+                <p className="text-sm text-gray-500">类型: {getTemplateLabel(provider.Type)}</p>
                 {provider.Console && (
                   <p className="text-sm">
                     <Button 
@@ -423,7 +478,7 @@ export default function ProvidersPage() {
                   <FormItem>
                     <FormLabel>名称</FormLabel>
                     <FormControl>
-                      <Input {...field} />
+                      <Input {...field} required />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -439,9 +494,10 @@ export default function ProvidersPage() {
                     <FormControl>
                       <select 
                         {...field} 
+                        required
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                         onChange={(e) => {
-                          field.onChange(e);
+                          field.onChange(e.target.value);
                           const selectedTemplate = providerTemplates.find(t => t.type === e.target.value);
                           if (selectedTemplate) {
                             form.setValue("raw_config", selectedTemplate.template ?? "");
@@ -455,10 +511,9 @@ export default function ProvidersPage() {
                           }
                         }}
                       >
-                        <option value="">请选择提供商类型</option>
                         {providerTemplates.map((template) => (
                           <option key={template.type} value={template.type}>
-                            {template.type}
+                            {getTemplateLabel(template.type)}
                           </option>
                         ))}
                       </select>
@@ -475,7 +530,19 @@ export default function ProvidersPage() {
                   <FormItem>
                     <FormLabel>Base URL</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="https://api.example.com" />
+                      <Input
+                        {...field}
+                        placeholder="https://api.openai.com"
+                        required
+                        onBlur={(event) => {
+                          const { value } = event.target;
+                          field.onBlur();
+                          const normalized = normalizeBaseUrlInput(value);
+                          if (normalized !== value) {
+                            form.setValue("base_url", normalized, { shouldValidate: true });
+                          }
+                        }}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -489,7 +556,7 @@ export default function ProvidersPage() {
                   <FormItem>
                     <FormLabel>API Key</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="输入 API Key" />
+                      <Input {...field} placeholder="输入 API Key" required />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -501,7 +568,7 @@ export default function ProvidersPage() {
                 name="console"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>控制台地址</FormLabel>
+                    <FormLabel>控制台地址 (可选)</FormLabel>
                     <FormControl>
                       <Input {...field} placeholder="https://example.com/console" />
                     </FormControl>
