@@ -24,6 +24,10 @@ func init() {
 
 func main() {
 	router := gin.Default()
+
+	// 添加请求日志中间件
+	router.Use(middleware.RequestLogger())
+
 	setwebui(router, "./webui/dist")
 
 	authOpenAi := middleware.Auth(os.Getenv("TOKEN"))

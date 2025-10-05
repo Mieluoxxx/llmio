@@ -16,7 +16,7 @@ LLMIO 是一个基于 Golang 的项目，提供统一的 API 来与各种大语�
 ## 主页
 ![](./docs/image1.png)
 
-## 多对一关联
+## 多对一模型映射关联
 ![](./docs/image.png)
 
 ## 部署
@@ -52,10 +52,25 @@ docker compose up -d
 
 ## 开发
 
+### 快速开始（推荐）
+
+使用一键启动脚本快速启动开发环境：
+
+```bash
+# 自动创建数据库目录、安装前端依赖并启动服务
+chmod +x start.sh
+./start.sh
+```
+
+脚本默认设置 `TOKEN=12345`，自动检测并使用 pnpm 或 npm 管理前端依赖，兼容 Linux 和 macOS 系统。
+
+### 手动安装
+
 ### 先决条件
 
 - Go 1.25.0+
-- Node.js 20+ (用于构建 Web UI)
+- Node.js 20+
+- pnpm (推荐) 或 npm
 
 ### 安装
 
@@ -73,19 +88,27 @@ docker compose up -d
 3. 初始化数据库：
    ```bash
    mkdir db
+   export TOKEN=12345  # API 访问令牌,用于管理界面和 API 认证
    go run main.go
    ```
-   这将自动创建一个 SQLite 数据库文件（`db/llmio.db`）并初始化数据库结构。
+   这将自动创建 SQLite 数据库文件（`db/llmio.db`）并初始化数据库结构。
 
 4. 构建前端界面：
    ```bash
    cd webui
-   npm install
-   npm run build
+   pnpm install  # 或使用 npm install
+   pnpm build    # 或使用 npm run build
    cd ..
    ```
-   
+
    前端使用 React 19 + TypeScript + Vite + Tailwind CSS 构建，支持现代化的响应式设计。
+
+5. 前端开发模式（可选）：
+   ```bash
+   cd webui
+   pnpm dev  # 或使用 npm run dev
+   ```
+   开发服务器将在 `http://localhost:5173` 启动，支持热更新。
 
 ### 配置
 
@@ -93,26 +116,35 @@ docker compose up -d
 
 #### 环境变量
 
-- `TOKEN`: API 访问令牌（可选，但推荐设置）
-- `TZ`: 时区设置（可选，默认为 UTC）
+- `TOKEN`: API 访问令牌，用于管理界面和 API 认证（推荐设置，默认 `12345`）
+- `GIN_MODE`: Gin 运行模式，可选值 `debug`、`release`（生产环境推荐 `release`）
+- `TZ`: 时区设置（可选，默认 `UTC`，推荐 `Asia/Shanghai`）
 
-#### 提供商配置示例：
+#### 提供商配置示例
 
-**OpenAI 提供商：**
+通过 Web UI 添加提供商时，系统会自动处理 Base URL，无需手动添加 `/v1` 后缀。
+
+**OpenAI 兼容提供商：**
 - 名称: openai
 - 类型: openai
-- 配置: `{"base_url": "https://api.openai.com/v1", "api_key": "your-api-key"}`
+- Base URL: `https://api.openai.com`（系统会自动添加 `/v1`）
+- API Key: `your-api-key`
+- 控制台地址（可选）: `https://platform.openai.com`
 
-**Anthropic 提供商：**
+**Anthropic 兼容提供商：**
 - 名称: anthropic
 - 类型: anthropic
-- 配置: `{"base_url": "https://api.anthropic.com/v1", "api_key": "your-api-key", "version": "2023-06-01"}`
+- Base URL: `https://api.anthropic.com`（系统会自动添加 `/v1`）
+- API Key: `your-api-key`
+- Version: `2023-06-01`
+- 控制台地址（可选）: `https://console.anthropic.com`
 
-#### 模型配置示例：
+#### 模型配置示例
+
 - 名称: gpt-3.5-turbo
-- 备注: OpenAI 的 GPT-3.5 Turbo 模型
+- 描述: OpenAI 的 GPT-3.5 Turbo 模型
 - 名称: claude-3-haiku-20240307
-- 备注: Anthropic 的 Claude 3 Haiku 模型
+- 描述: Anthropic 的 Claude 3 Haiku 模型
 
 ### 运行服务
 
@@ -130,9 +162,9 @@ go run main.go
 LLMIO 提供了一个现代化的 Web 管理界面，包含以下功能：
 
 1. **系统概览**：实时显示系统指标，如请求次数、Token 使用情况和模型调用统计
-2. **提供商管理**：添加、编辑和删除 LLM 提供商
-3. **模型管理**：管理可用的模型
-4. **模型提供商关联**：关联模型与提供商，并设置权重
+2. **提供商管理**：添加、编辑、删除和测试 LLM 提供商连接
+3. **模型管理**：管理可用的模型及其配置
+4. **模型映射**：关联模型与提供商，配置权重和负载均衡策略
 5. **请求日志**：查看详细请求日志，支持筛选和分页
 
 访问 `http://localhost:7070/` 来使用 Web 管理界面。
@@ -199,10 +231,10 @@ GET `/v1/models`
 - PUT `/api/models/:id` - 更新模型
 - DELETE `/api/models/:id` - 删除模型
 
-- GET `/api/model-providers` - 获取模型提供商关联
-- POST `/api/model-providers` - 创建模型提供商关联
-- PUT `/api/model-providers/:id` - 更新模型提供商关联
-- DELETE `/api/model-providers/:id` - 删除模型提供商关联
+- GET `/api/model-providers` - 获取模型映射关联
+- POST `/api/model-providers` - 创建模型映射关联
+- PUT `/api/model-providers/:id` - 更新模型映射关联
+- DELETE `/api/model-providers/:id` - 删除模型映射关联
 
 - GET `/api/logs` - 获取请求日志
 - GET `/api/metrics/use/:days` - 获取使用指标
@@ -220,24 +252,7 @@ GET `/v1/models`
 - **balancer/**: 负载均衡算法
 - **common/**: 通用工具和响应助手
 - **webui/**: 前端管理界面（React 19 + TypeScript + Vite + Tailwind CSS）
-- **middleware/**: 中间件（身份验证等）
-
-## 开发
-
-### 后端开发
-
-```bash
-# 创建db目录
-mkdir db
-go run main.go
-```
-
-### 前端开发
-
-```bash
-cd webui
-npm run dev
-```
+- **middleware/**: 中间件（身份验证、请求日志等）
 
 ## 贡献
 

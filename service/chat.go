@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/atopos31/llmio/balancer"
+	"github.com/atopos31/llmio/middleware"
 	"github.com/atopos31/llmio/models"
 	"github.com/atopos31/llmio/providers"
 	"github.com/gin-gonic/gin"
@@ -18,25 +19,61 @@ import (
 )
 
 func BalanceChat(c *gin.Context, style string, Beforer Beforer, processer Processer) error {
+	requestID := middleware.GetRequestID(c)
 	proxyStart := time.Now()
+
+	slog.Info("balance_chat_started",
+		"request_id", requestID,
+		"style", style,
+	)
+
 	rawData, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		return err
-	}
-	ctx := c.Request.Context()
-	before, err := Beforer(rawData)
-	if err != nil {
+		slog.Error("failed_to_read_request_body",
+			"request_id", requestID,
+			"error", err,
+		)
 		return err
 	}
 
+	ctx := c.Request.Context()
+	before, err := Beforer(rawData)
+	if err != nil {
+		slog.Error("failed_to_parse_request",
+			"request_id", requestID,
+			"error", err,
+		)
+		return err
+	}
+
+	slog.Info("request_parsed",
+		"request_id", requestID,
+		"model", before.model,
+		"stream", before.stream,
+		"tool_call", before.toolCall,
+		"structured_output", before.structuredOutput,
+		"image", before.image,
+	)
+
 	llmProvidersWithLimit, err := ProvidersBymodelsName(ctx, before.model)
 	if err != nil {
+		slog.Error("failed_to_get_providers",
+			"request_id", requestID,
+			"model", before.model,
+			"error", err,
+		)
 		return err
 	}
 	// 所有模型提供商关联
 	llmproviders := llmProvidersWithLimit.Providers
 
-	slog.Info("request", "model", before.model, "stream", before.stream, "tool_call", before.toolCall, "structured_output", before.structuredOutput, "image", before.image)
+	slog.Info("providers_found",
+		"request_id", requestID,
+		"model", before.model,
+		"provider_count", len(llmproviders),
+		"max_retry", llmProvidersWithLimit.MaxRetry,
+		"timeout", llmProvidersWithLimit.TimeOut,
+	)
 
 	if len(llmproviders) == 0 {
 		return fmt.Errorf("no provider found for models %s", before.model)
@@ -86,8 +123,20 @@ func BalanceChat(c *gin.Context, style string, Beforer Beforer, processer Proces
 	}
 
 	if len(items) == 0 {
+		slog.Error("no_valid_provider_after_filtering",
+			"request_id", requestID,
+			"model", before.model,
+			"tool_call", before.toolCall,
+			"structured_output", before.structuredOutput,
+			"image", before.image,
+		)
 		return errors.New("no provider with tool_call or structured_output or image found for models " + before.model)
 	}
+
+	slog.Info("load_balancing_ready",
+		"request_id", requestID,
+		"available_providers", len(items),
+	)
 	// 收集重试过程中的err日志
 	retryErrLog := make(chan models.ChatLog, llmProvidersWithLimit.MaxRetry)
 	defer close(retryErrLog)
@@ -101,10 +150,24 @@ func BalanceChat(c *gin.Context, style string, Beforer Beforer, processer Proces
 	}()
 
 	for retry := 0; retry < llmProvidersWithLimit.MaxRetry; retry++ {
+		slog.Info("retry_attempt",
+			"request_id", requestID,
+			"retry", retry,
+			"max_retry", llmProvidersWithLimit.MaxRetry,
+		)
+
 		select {
 		case <-ctx.Done():
+			slog.Warn("request_cancelled",
+				"request_id", requestID,
+				"retry", retry,
+			)
 			return ctx.Err()
 		case <-time.After(time.Second * time.Duration(llmProvidersWithLimit.TimeOut)):
+			slog.Error("retry_timeout",
+				"request_id", requestID,
+				"timeout_seconds", llmProvidersWithLimit.TimeOut,
+			)
 			return errors.New("retry time out !")
 		default:
 			// 加权负载均衡
@@ -121,10 +184,20 @@ func BalanceChat(c *gin.Context, style string, Beforer Beforer, processer Proces
 
 			chatModel, err := providers.New(style, provider.Config)
 			if err != nil {
+				slog.Error("failed_to_create_provider_client",
+					"request_id", requestID,
+					"provider", provider.Name,
+					"error", err,
+				)
 				return err
 			}
 
-			slog.Info("using provider", "provider", provider.Name, "model", modelWithProvider.ProviderModel)
+			slog.Info("provider_selected",
+				"request_id", requestID,
+				"provider", provider.Name,
+				"provider_model", modelWithProvider.ProviderModel,
+				"retry", retry,
+			)
 
 			log := models.ChatLog{
 				Name:          before.model,
@@ -137,8 +210,21 @@ func BalanceChat(c *gin.Context, style string, Beforer Beforer, processer Proces
 			}
 			reqStart := time.Now()
 			client := providers.GetClient(time.Second * time.Duration(llmProvidersWithLimit.TimeOut) / 3)
+
+			slog.Info("sending_request_to_provider",
+				"request_id", requestID,
+				"provider", provider.Name,
+				"timeout_seconds", llmProvidersWithLimit.TimeOut/3,
+			)
+
 			res, err := chatModel.Chat(ctx, client, modelWithProvider.ProviderModel, before.raw)
 			if err != nil {
+				slog.Error("provider_request_failed",
+					"request_id", requestID,
+					"provider", provider.Name,
+					"retry", retry,
+					"error", err,
+				)
 				retryErrLog <- log.WithError(err)
 				// 请求失败 移除待选
 				delete(items, *item)
@@ -150,9 +236,20 @@ func BalanceChat(c *gin.Context, style string, Beforer Beforer, processer Proces
 				if err != nil {
 					slog.Error("read body error", "error", err)
 				}
+				slog.Error("provider_returned_error_status",
+					"request_id", requestID,
+					"provider", provider.Name,
+					"status_code", res.StatusCode,
+					"response_body", string(byteBody),
+					"retry", retry,
+				)
 				retryErrLog <- log.WithError(fmt.Errorf("status: %d, body: %s", res.StatusCode, string(byteBody)))
 
 				if res.StatusCode == http.StatusTooManyRequests {
+					slog.Warn("rate_limit_hit",
+						"request_id", requestID,
+						"provider", provider.Name,
+					)
 					// 达到RPM限制 降低权重
 					items[*item] -= items[*item] / 3
 				} else {
@@ -163,6 +260,12 @@ func BalanceChat(c *gin.Context, style string, Beforer Beforer, processer Proces
 				continue
 			}
 			defer res.Body.Close()
+
+			slog.Info("provider_response_success",
+				"request_id", requestID,
+				"provider", provider.Name,
+				"status_code", res.StatusCode,
+			)
 
 			logId, err := SaveChatLog(ctx, log)
 			if err != nil {
@@ -213,22 +316,57 @@ type ProvidersWithlimit struct {
 }
 
 func ProvidersBymodelsName(ctx context.Context, modelsName string) (*ProvidersWithlimit, error) {
-	llmmodels, err := gorm.G[models.Model](models.DB).Where("name = ?", modelsName).First(ctx)
+	slog.Debug("query_model_providers_started",
+		"model", modelsName,
+	)
+
+	// 明确排除软删除的记录
+	llmmodels, err := gorm.G[models.Model](models.DB).Where("name = ? AND deleted_at IS NULL", modelsName).First(ctx)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			slog.Warn("model_not_found",
+				"model", modelsName,
+			)
 			return nil, errors.New("not found model " + modelsName)
 		}
+		slog.Error("database_query_error",
+			"model", modelsName,
+			"error", err,
+		)
 		return nil, err
 	}
 
+	slog.Debug("model_found",
+		"model", modelsName,
+		"model_id", llmmodels.ID,
+		"max_retry", llmmodels.MaxRetry,
+		"timeout", llmmodels.TimeOut,
+	)
+
 	llmproviders, err := gorm.G[models.ModelWithProvider](models.DB).Where("model_id = ?", llmmodels.ID).Find(ctx)
 	if err != nil {
+		slog.Error("failed_to_query_model_providers",
+			"model", modelsName,
+			"model_id", llmmodels.ID,
+			"error", err,
+		)
 		return nil, err
 	}
 
 	if len(llmproviders) == 0 {
+		slog.Error("no_provider_mapping_found",
+			"model", modelsName,
+			"model_id", llmmodels.ID,
+		)
 		return nil, errors.New("not provider for model " + modelsName)
 	}
+
+	slog.Info("model_providers_loaded",
+		"model", modelsName,
+		"model_id", llmmodels.ID,
+		"provider_count", len(llmproviders),
+	)
+
 	return &ProvidersWithlimit{
 		Providers: llmproviders,
 		MaxRetry:  llmmodels.MaxRetry,
